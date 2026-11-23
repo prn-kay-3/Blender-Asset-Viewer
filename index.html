@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Asset Previewer</title>
+<style>
+:root{--bg:#f5f4f8;--panel:#fff;--ink:#1d1a26;--mute:#6b6779;--line:#e2dfeb;--acc:#7a2fd0;--accink:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15121c;--panel:#1e1a29;--ink:#efecf7;--mute:#9a94ad;--line:#2f2a3d;--acc:#b47cff;--accink:#150a26}}
+:root[data-theme="dark"]{--bg:#15121c;--panel:#1e1a29;--ink:#efecf7;--mute:#9a94ad;--line:#2f2a3d;--acc:#b47cff;--accink:#150a26}
+html{scroll-padding-top:env(safe-area-inset-top,0px);height:100%}
+body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.app{display:flex;flex-direction:column;height:100%}
+.stage{position:relative;flex:1;min-height:0;overflow:hidden}
+canvas{display:block;width:100%;height:100%}
+.hint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;pointer-events:none;color:var(--mute);text-align:center;padding:20px}
+.hint b{font-size:18px;color:var(--ink)}
+.stage.drag{outline:3px dashed var(--acc);outline-offset:-10px}
+.toast{position:absolute;left:12px;bottom:12px;right:12px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px;display:none}
+.panel{background:var(--panel);border-top:1px solid var(--line);padding:12px 14px;overflow:auto;max-height:42%;display:flex;flex-direction:column;gap:12px}
+@media(min-width:800px){.app{flex-direction:row}.panel{width:290px;max-height:none;border-top:0;border-left:1px solid var(--line);order:2}}
+h1{font-size:16px;margin:0}
+h2{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);margin:0 0 6px}
+button,select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 10px;cursor:pointer}
+button.primary{background:var(--acc);color:var(--accink);border-color:var(--acc);font-weight:600}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.row>*{flex:1}
+label.chk{display:flex;gap:6px;align-items:center;flex:none;min-width:45%}
+input[type=range]{width:100%;accent-color:var(--acc)}
+input[type=color]{width:38px;height:30px;padding:0;border:1px solid var(--line);border-radius:6px;background:none;flex:none}
+dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:0}
+dt{color:var(--mute)}dd{margin:0;text-align:right;word-break:break-all}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="stage" id="stage">
+    <canvas id="c"></canvas>
+    <div class="hint" id="hint"><b>Drop a 3D file here</b>GLB · glTF (embedded) · OBJ · STL<br>Drag to orbit, scroll to zoom, right-drag to pan</div>
+    <div class="toast" id="toast"></div>
+  </div>
+  <aside class="panel">
+    <h1>🐸 Asset Previewer</h1>
+    <div class="row">
+      <button class="primary" id="open">Open file…</button>
+      <button id="demo">Load demo</button>
+      <input type="file" id="file" accept=".glb,.gltf,.obj,.stl" hidden>
+    </div>
+    <section><h2>Model</h2>
+      <dl id="stats"><dt>File</dt><dd>—</dd></dl>
+    </section>
+    <section><h2>View</h2>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="wire"> Wireframe</label>
+        <label class="chk"><input type="checkbox" id="clay"> Clay</label>
+        <label class="chk"><input type="checkbox" id="spin"> Auto-rotate</label>
+        <label class="chk"><input type="checkbox" id="grid" checked> Grid</label>
+        <label class="chk"><input type="checkbox" id="zup"> Z-up → Y-up</label>
+        <label class="chk">Background <input type="color" id="bg" value="#ece9f3"></label>
+      </div>
+    </section>
+    <section><h2>Light</h2>
+      <input type="range" id="light" min="0.2" max="2.5" step="0.05" value="1" aria-label="Light intensity">
+    </section>
+    <section id="animBox" hidden><h2>Animation</h2>
+      <div class="row"><select id="clip"></select><button id="play">Pause</button></div>
+    </section>
+    <div class="row">
+      <button id="frame">Reset view</button>
+      <button id="shot">Save PNG</button>
+    </div>
+    <div style="color:var(--mute);font-size:12px">Blender tip: File → Export → glTF 2.0 (.glb). Turn on "Apply Modifiers" and export materials for best results.</div>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const stage = $('stage'), canvas = $('c');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, preserveDrawingBuffer:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color($('bg').value);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 1000);
+const controls = new THREE.OrbitControls(camera, canvas);
+controls.enableDamping = true;
+
+const lights = [
+  [new THREE.HemisphereLight(0xffffff, 0x555566, 0.9), 0.9],
+  [new THREE.DirectionalLight(0xffffff, 1.6), 1.6],
+  [new THREE.DirectionalLight(0xbfd0ff, 0.6), 0.6]
+];
+lights[1][0].position.set(5, 8, 6);
+lights[2][0].position.set(-6, 3, -5);
+lights.forEach(l => scene.add(l[0]));
+
+const pivot = new THREE.Group();
+scene.add(pivot);
+let model = null, gridObj = null, mixer = null, action = null, clips = [], name = '';
+const clayMat = new THREE.MeshStandardMaterial({color: 0xb9b3c9, roughness: 0.85});
+const clock = new THREE.Clock();
+
+function toast(msg){ const t = $('toast'); t.textContent = msg; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 4000); }
+
+function resize(){
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage); resize();
+
+function disposeModel(){
+  if (!model) return;
+  pivot.remove(model);
+  model.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    [].concat(o.material || []).forEach(m => m.dispose());
+  });
+  model = null; mixer = null; action = null; clips = [];
+}
+
+function frame(){
+  if (!model) return;
+  pivot.position.set(0, 0, 0); pivot.rotation.x = $('zup').checked ? -Math.PI / 2 : 0;
+  pivot.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(model), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+  pivot.position.set(-c.x, -box.min.y, -c.z);
+  const d = Math.max(size.x, size.y, size.z) || 1;
+  camera.near = d / 100; camera.far = d * 100; camera.updateProjectionMatrix();
+  camera.position.set(d * 1.5, size.y * 0.6 + d * 0.8, d * 1.9);
+  controls.target.set(0, size.y / 2, 0);
+  controls.maxDistance = d * 20; controls.update();
+  if (gridObj) scene.remove(gridObj);
+  gridObj = new THREE.GridHelper(Math.max(4, Math.ceil(d * 3)), 20, 0x8a80a0, 0xb8b2c8);
+  gridObj.visible = $('grid').checked; scene.add(gridObj);
+  return size;
+}
+
+function applyLook(){
+  const w = $('wire').checked;
+  clayMat.wireframe = w;
+  scene.overrideMaterial = $('clay').checked ? clayMat : null;
+  if (model) model.traverse(o => [].concat(o.material || []).forEach(m => m.wireframe = w));
+}
+
+function setModel(obj, anims, file){
+  disposeModel();
+  model = obj; name = file; clips = anims || [];
+  pivot.add(model);
+  applyLook();
+  const size = frame();
+  let tris = 0, verts = 0, meshes = 0; const mats = new Set();
+  model.traverse(o => {
+    if (!o.isMesh) return;
+    meshes++;
+    const g = o.geometry, p = g.attributes.position;
+    verts += p.count; tris += g.index ? g.index.count / 3 : p.count / 3;
+    [].concat(o.material).forEach(m => mats.add(m.uuid));
+  });
+  const f = n => Math.round(n).toLocaleString();
+  $('stats').innerHTML = `<dt>File</dt><dd>${file.replace(/[<>&]/g, '')}</dd><dt>Triangles</dt><dd>${f(tris)}</dd><dt>Vertices</dt><dd>${f(verts)}</dd><dt>Meshes</dt><dd>${meshes}</dd><dt>Materials</dt><dd>${mats.size}</dd><dt>Size</dt><dd>${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)}</dd>`;
+  $('hint').style.display = 'none';
+  $('animBox').hidden = !clips.length;
+  if (clips.length){
+    mixer = new THREE.AnimationMixer(model);
+    $('clip').innerHTML = clips.map((c, i) => `<option value="${i}">${c.name.replace(/[<>&]/g, '') || 'Clip ' + (i + 1)}</option>`).join('');
+    playClip(0);
+  }
+}
+
+function playClip(i){
+  if (action) action.stop();
+  action = mixer.clipAction(clips[i]); action.play(); $('play').textContent = 'Pause';
+}
+
+function loadFile(file){
+  const ext = file.name.split('.').pop().toLowerCase();
+  const r = new FileReader();
+  r.onerror = () => toast('Could not read that file.');
+  r.onload = () => {
+    try {
+      if (ext === 'glb' || ext === 'gltf'){
+        new THREE.GLTFLoader().parse(r.result, '', g => { $('zup').checked = false; setModel(g.scene, g.animations, file.name); },
+          e => toast('glTF error: ' + (e.message || e) + ' (multi-file .gltf needs to be exported as .glb)'));
+      } else if (ext === 'obj'){
+        $('zup').checked = false; setModel(new THREE.OBJLoader().parse(r.result), [], file.name);
+      } else if (ext === 'stl'){
+        const geo = new THREE.STLLoader().parse(r.result);
+        if (!geo.attributes.normal) geo.computeVertexNormals();
+        $('zup').checked = true; // Blender STL exports are Z-up
+        setModel(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({color: 0xb9a3e3, roughness: 0.5})), [], file.name);
+      } else toast('Unsupported file type: .' + ext);
+    } catch (e) { toast('Failed to load: ' + e.message); }
+  };
+  (ext === 'obj' || ext === 'gltf' && false) ? r.readAsText(file) : r.readAsArrayBuffer(file);
+}
+
+function demoFrog(){
+  const g = new THREE.Group();
+  const mat = (c, r = 0.4) => new THREE.MeshStandardMaterial({color: c, roughness: r});
+  const purple = mat(0x6b21c0, 0.35), dark = mat(0x3d0f73), white = mat(0xffffff, 0.1), black = mat(0x050508, 0.1);
+  const blob = (m, p, s) => { const o = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), m); o.position.set(...p); o.scale.set(...s); g.add(o); return o; };
+  blob(purple, [0, .85, 0], [1.1, .85, 1.2]);
+  blob(mat(0xc79df2), [0, .8, -.45], [.8, .75, .9]);
+  blob(purple, [0, 1.15, -.75], [1.05, .65, .8]);
+  [-1, 1].forEach(s => {
+    blob(purple, [.5 * s, 1.6, -.85], [.4, .4, .4]);
+    blob(white, [.5 * s, 1.75, -.95], [.3, .3, .3]);
+    blob(black, [.5 * s, 1.82, -1.18], [.15, .15, .15]);
+    blob(purple, [s, .6, .4], [.55, .6, .85]);
+    blob(dark, [1.25 * s, .09, -.85], [.32, .09, .5]);
+    blob(dark, [.75 * s, .09, -1.25], [.28, .09, .32]);
+    blob(mat(0xff73a6, 0.6), [.72 * s, 1.02, -1.28], [.17, .1, .05]);
+  });
+  const m = new THREE.Mesh(new THREE.TorusGeometry(.55, .03, 8, 32, Math.PI), mat(0x1f0526));
+  m.position.set(0, 1.08, -1.42); m.rotation.z = Math.PI; g.add(m);
+  return g;
+}
+
+// UI wiring
+$('open').onclick = () => $('file').click();
+$('file').onchange = e => e.target.files[0] && loadFile(e.target.files[0]);
+$('demo').onclick = () => { $('zup').checked = false; setModel(demoFrog(), [], 'demo-frog (built in)'); };
+['wire', 'clay'].forEach(id => $(id).onchange = applyLook);
+$('spin').onchange = e => controls.autoRotate = e.target.checked;
+$('grid').onchange = e => gridObj && (gridObj.visible = e.target.checked);
+$('zup').onchange = frame;
+$('bg').oninput = e => scene.background = new THREE.Color(e.target.value);
+$('light').oninput = e => lights.forEach(([l, base]) => l.intensity = base * e.target.value);
+$('frame').onclick = frame;
+$('clip').onchange = e => playClip(+e.target.value);
+$('play').onclick = () => { if (!action) return; action.paused = !action.paused; $('play').textContent = action.paused ? 'Play' : 'Pause'; };
+$('shot').onclick = () => {
+  renderer.render(scene, camera);
+  const a = document.createElement('a'); a.href = canvas.toDataURL('image/png');
+  a.download = (name.replace(/\.[^.]+$/, '') || 'preview') + '.png'; a.click();
+};
+stage.addEventListener('dragover', e => { e.preventDefault(); stage.classList.add('drag'); });
+stage.addEventListener('dragleave', () => stage.classList.remove('drag'));
+stage.addEventListener('drop', e => {
+  e.preventDefault(); stage.classList.remove('drag');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+(function loop(){
+  requestAnimationFrame(loop);
+  if (mixer) mixer.update(clock.getDelta()); else clock.getDelta();
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>
